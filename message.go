@@ -54,8 +54,13 @@ func (m *Message) ConversationID() ConversationID {
 	return ident.CopyID(m.metadata.conversationID)
 }
 
+// ErrMissingRecipient returned when Message.Reply is called with a nil Recipient
 var ErrMissingRecipient = errors.New("recipient must be provided")
+
+// ErrInvalidMessage returned if a message is replayed
 var ErrInvalidMessage = errors.New("metadata reprovided for existing conversation")
+
+// ErrMissingMessageMetadata returned when a new conversation has insufficient metadat
 var ErrMissingMessageMetadata = errors.New("metadata missing for new conversation")
 
 // Reply allows a Recipient to generate a response Message if desired.
