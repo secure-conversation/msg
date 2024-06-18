@@ -246,12 +246,6 @@ func (m *Message) New() any {
 	return &Message{}
 }
 
-// PublicKeyInfo contains a PublicKey and the corresponding unique identifier of its PrivateKey
-type PublicKeyInfo struct {
-	PrivateKeyID elliptic.PrivateKeyID
-	PublicKey    *elliptic.PublicKey
-}
-
 // NewConversation creates the Signed[Message] that can initiate a conversation with the recipient
 func NewConversation(signerPriKey *elliptic.PrivateKey, recipientInfo *PublicKeyInfo, content []byte) (*elliptic.Signed[*Message], []byte, error) {
 	return NewConversationWithAlgo(signerPriKey, recipientInfo, content, sym.AESGCM)
