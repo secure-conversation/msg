@@ -62,3 +62,44 @@ func TestUnMarshalPublicKeyInfo(t *testing.T) {
 		t.Fatal("unexpected KeyID match failure")
 	}
 }
+
+func TestPublicKeyInfo(t *testing.T) {
+
+	c, err := elliptic.NewCurve(elliptic.CurveP256)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	privKey, err := c.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p := &PublicKeyInfo{
+		PrivateKeyID: privKey.ID(),
+		PublicKey:    privKey.PublicKey(),
+	}
+
+	s, err := elliptic.NewSigned(privKey, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := s.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s1, err := elliptic.ParseSigned[*PublicKeyInfo](b)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ok, err := s1.Verify(privKey.PublicKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("unexpected failure to verify signature")
+	}
+}
