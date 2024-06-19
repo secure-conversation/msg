@@ -39,10 +39,8 @@ func main() {
     PublicKey:    recipientIdentityKey.PublicKey(),
   }
 
-  // sender transfers Hello World to the recipient
-  msg, _, _ := msg.NewConversation(senderIdentityKey, recipientPubInfo, []byte("Hello World"))
-
-  b, _ := msg.Marshal()
+  // sender transferring Hello World to the recipient
+  b, _, _ := msg.NewConversation(senderIdentityKey, recipientPubInfo, []byte("Hello World"))
 
   fmt.Println(string(b))
 }
