@@ -34,7 +34,12 @@ func TestNewConversation(t *testing.T) {
 
 	content := []byte("Hello World")
 
-	msg, key, err := NewConversation(senderIdentityKey, recipientPubInfo, content)
+	b, details, err := NewConversation(senderIdentityKey, recipientPubInfo, content)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	msg, err := elliptic.ParseSigned[*Message](b)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +56,7 @@ func TestNewConversation(t *testing.T) {
 		t.Fatal("unexpected id mismatch")
 	}
 
-	received, err := sym.Decrypt(msg.Data.content.ToMessage(), key)
+	received, err := sym.Decrypt(msg.Data.content.ToMessage(), details.SharedSecret)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,12 +90,7 @@ func TestNewConversation_1(t *testing.T) {
 
 	content := []byte("Hello World")
 
-	msg, key, err := NewConversation(senderIdentityKey, recipientPubInfo, content)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	b, err := msg.Marshal()
+	b, details, err := NewConversation(senderIdentityKey, recipientPubInfo, content)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestNewConversation_1(t *testing.T) {
 		t.Fatal("unexpected id mismatch")
 	}
 
-	received, err := sym.Decrypt(msg2.Data.content.ToMessage(), key)
+	received, err := sym.Decrypt(msg2.Data.content.ToMessage(), details.SharedSecret)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,22 +126,23 @@ type testRecipient struct {
 	stop             bool
 	received_content []byte
 	s                elliptic.PrivateKeyID
-	c                map[ConversationID][]byte
+	c                map[ConversationID]*ConversationDetails
 	p                map[elliptic.PrivateKeyID]*elliptic.PrivateKey
+	p1               map[elliptic.PrivateKeyID]*elliptic.PublicKey
 }
 
-func (t *testRecipient) GetKey(ctx context.Context, conID ConversationID) (key []byte, err error) {
+func (t *testRecipient) GetDetails(ctx context.Context, conID ConversationID) (details *ConversationDetails, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			key = nil
+			details = nil
 			err = nil
 		}
 	}()
-	key = t.c[conID]
+	details = t.c[conID]
 	return
 }
-func (t *testRecipient) SetKey(ctx context.Context, conID ConversationID, key []byte) error {
-	t.c[conID] = key
+func (t *testRecipient) SetDetails(ctx context.Context, details *ConversationDetails) error {
+	t.c[details.ConversationID] = details
 	return nil
 }
 func (t *testRecipient) GetPrivateKey(ctx context.Context, keyID elliptic.PrivateKeyID) (key *elliptic.PrivateKey, err error) {
@@ -154,8 +155,15 @@ func (t *testRecipient) GetPrivateKey(ctx context.Context, keyID elliptic.Privat
 	key = t.p[keyID]
 	return
 }
-func (t *testRecipient) GetSigningKey(ctx context.Context) *elliptic.PrivateKey {
-	return t.p[t.s]
+func (t *testRecipient) GetPublicKey(ctx context.Context, keyID elliptic.PrivateKeyID) (key *elliptic.PublicKey, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			key = nil
+			err = nil
+		}
+	}()
+	key = t.p1[keyID]
+	return
 }
 func (t *testRecipient) Handle(ctx context.Context, data []byte) (bool, []byte) {
 	if t.stop {
@@ -167,20 +175,24 @@ func (t *testRecipient) Handle(ctx context.Context, data []byte) (bool, []byte) 
 
 func TestMessage_Reply(t *testing.T) {
 
-	var sender *testRecipient
-	var recipient *testRecipient
+	var sender = &testRecipient{
+		stop: true, // This stops the conversation, stores reply from recipient
+		c:    map[ConversationID]*ConversationDetails{},
+		p:    map[elliptic.PrivateKeyID]*elliptic.PrivateKey{},
+		p1:   map[elliptic.PrivateKeyID]*elliptic.PublicKey{},
+	}
+	var recipient = &testRecipient{
+		c:  map[ConversationID]*ConversationDetails{},
+		p:  map[elliptic.PrivateKeyID]*elliptic.PrivateKey{},
+		p1: map[elliptic.PrivateKeyID]*elliptic.PublicKey{},
+	}
 
 	var recipientPubInfo *PublicKeyInfo
 
 	content := []byte("Hello World")
 
-	// Create recipient
+	// Create recipient keys
 	{
-		r := &testRecipient{
-			c: map[ConversationID][]byte{},
-			p: map[elliptic.PrivateKeyID]*elliptic.PrivateKey{},
-		}
-
 		c, err := elliptic.NewCurve(elliptic.CurveP256)
 		if err != nil {
 			t.Fatal(err)
@@ -191,25 +203,19 @@ func TestMessage_Reply(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		r.p[recipientIdentityKey.ID()] = recipientIdentityKey
-		r.s = recipientIdentityKey.ID()
+		recipient.p[recipientIdentityKey.ID()] = recipientIdentityKey
+		recipient.s = recipientIdentityKey.ID()
 
 		recipientPubInfo = &PublicKeyInfo{
 			PrivateKeyID: recipientIdentityKey.ID(),
 			PublicKey:    recipientIdentityKey.PublicKey(),
 		}
 
-		recipient = r
+		sender.p1[recipientIdentityKey.ID()] = recipientIdentityKey.PublicKey()
 	}
 
-	// Create sender
+	// Create sender keys
 	{
-		s := &testRecipient{
-			stop: true, // This stops the conversation, stores reply from recipient
-			c:    map[ConversationID][]byte{},
-			p:    map[elliptic.PrivateKeyID]*elliptic.PrivateKey{},
-		}
-
 		c, err := elliptic.NewCurve(elliptic.CurveP521)
 		if err != nil {
 			t.Fatal(err)
@@ -220,60 +226,47 @@ func TestMessage_Reply(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		s.p[senderIdentityKey.ID()] = senderIdentityKey
-		s.s = senderIdentityKey.ID()
+		sender.p[senderIdentityKey.ID()] = senderIdentityKey
+		sender.s = senderIdentityKey.ID()
 
-		sender = s
+		recipient.p1[senderIdentityKey.ID()] = senderIdentityKey.PublicKey()
 	}
 
 	// Sender creates message, receiving one-time key for conversation
 	var b []byte
 	{
-		var msg *elliptic.Signed[*Message]
-		msg, key, err := NewConversation(sender.GetSigningKey(context.Background()), recipientPubInfo, content)
+		ctx := context.Background()
+
+		signingKey, err := sender.GetPrivateKey(ctx, sender.s)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		msg, details, err := NewConversation(signingKey, recipientPubInfo, content)
 		if err != nil {
 			t.Fatal(err)
 		}
 		// Sender stores one-time key for the conversation
 		// so that they can unpack any replies they receive
-		sender.SetKey(context.Background(), msg.Data.ConversationID(), key)
+		sender.SetDetails(context.Background(), details)
 
-		// Serialise to mimic transport of message
-		b, err = msg.Marshal()
-		if err != nil {
-			t.Fatal(err)
-		}
+		// Mimic transportation
+		b = msg
 	}
 
 	// Recipient agrees to conversation, processes message and sends back a reply
 	{
-		// Unpacks message, confirms from holder of private key and message intact
-		receivedMessage, err := elliptic.ParseSigned[*Message](b)
+		reply, err := HandleConversationMessage(context.Background(), b, recipient)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		// Attempts to create reply
-		reply, err := receivedMessage.Data.Reply(context.Background(), recipient)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		// Serialise to minic transport of message
-		b, err = reply.Marshal()
-		if err != nil {
-			t.Fatal(err)
-		}
+		// Mimic transportation
+		b = reply
 	}
 
-	// Sender receives reply, unpacks, confirms from holder of private key ...
-	receivedMessage, err := elliptic.ParseSigned[*Message](b)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Sender processes reply, which should be stopping the conversation
-	reply, err := receivedMessage.Data.Reply(context.Background(), sender)
+	// Sender receives reply, should be no further messages
+	reply, err := HandleConversationMessage(context.Background(), b, sender)
 	if err != nil {
 		t.Fatal(err)
 	}

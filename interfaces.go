@@ -6,26 +6,38 @@ import (
 	"github.com/secure-conversation/elliptic"
 )
 
-// ConversationManagerKey manages the keys for conversations
-type ConversationKeyManager interface {
-	// GetConversationKey returns the shared encryption key for the conversation
-	GetKey(context.Context, ConversationID) ([]byte, error)
-	// SetConversationKey allows the shared encryption key to be stored against the conversation by the recipient
-	SetKey(context.Context, ConversationID, []byte) error
+// ConversationManager manages the details for conversations
+type ConversationManager interface {
+	// GetDetails returns the details for the conversation
+	GetDetails(context.Context, ConversationID) (*ConversationDetails, error)
+	// SetDetails allows the details of a conversaton to be stored
+	SetDetails(context.Context, *ConversationDetails) error
+}
+
+// PublicKeyManager manages public keys
+type PublicKeyManager interface {
+	// GetPrivateKey retrieves a public key based on its associated PrivateKeyID
+	GetPublicKey(context.Context, elliptic.PrivateKeyID) (*elliptic.PublicKey, error)
 }
 
 // PrivateKeyManager manages private keys
 type PrivateKeyManager interface {
-	// GetPrivateKey retrieves the recipient's private key based on the PrivateKeyID
+	// GetPrivateKey retrieves a private key based on the PrivateKeyID
 	GetPrivateKey(context.Context, elliptic.PrivateKeyID) (*elliptic.PrivateKey, error)
-	// GetSigningKey returns the PrivateKey to be used to sign responses
-	GetSigningKey(ctx context.Context) *elliptic.PrivateKey
+}
+
+// Handler provides the mechanism to handle received messages
+type Handler interface {
+	// Handle is called to allow the Recipient to process and optionally respond to the supplied message
+	// Set flag to true if a reply message should be sent, setting to false will mean no message is
+	// sent irrespective of whether reply is nil or not.
+	Handle(ctx context.Context, data []byte) (flag bool, reply []byte)
 }
 
 // Recipient specifies the functions needed to respond to a received Message
 type Recipient interface {
-	ConversationKeyManager
+	ConversationManager
 	PrivateKeyManager
-	// Handle is called to allow the Recipient to
-	Handle(ctx context.Context, data []byte) (bool, []byte)
+	PublicKeyManager
+	Handler
 }
